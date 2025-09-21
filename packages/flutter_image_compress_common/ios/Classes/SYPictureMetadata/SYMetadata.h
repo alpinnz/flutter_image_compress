@@ -1,12 +1,10 @@
 //
 //  SYMetadata.h
-//  SYPictureMetadataExample
-//
-//  Created by Stan Chevallier on 12/13/12.
-//  Copyright (c) 2012 Syan. All rights reserved.
 //
 
 #import <Foundation/Foundation.h>
+#import <Photos/Photos.h> // Using Photos framework
+
 #import "SYMetadataTIFF.h"
 #import "SYMetadataGIF.h"
 #import "SYMetadataJFIF.h"
@@ -25,11 +23,6 @@
 #import "SYMetadata8BIM.h"
 #import "SYMetadataDNG.h"
 #import "SYMetadataExifAux.h"
-
-// http://www.sno.phy.queensu.ca/~phil/exiftool/TagNames/index.html
-// http://www.exiv2.org/tags.html
-
-@class ALAsset;
 
 @interface SYMetadata : SYMetadataBase
 
@@ -54,7 +47,7 @@
 @property SYMETADATA_PROPERTY_STRONG SYMetadataDNG           *metadataDNG;
 @property SYMETADATA_PROPERTY_STRONG SYMetadataExifAux       *metadataExifAux;
 
-// we don't know how to parse those, so we juste give access to them
+// Fallback
 @property SYMETADATA_PROPERTY_COPY NSDictionary   *metadataApple;
 @property SYMETADATA_PROPERTY_COPY NSDictionary   *metadataPictureStyle;
 
@@ -72,12 +65,11 @@
 @property (nonatomic, copy, readonly)   NSString  *profileName;
 
 + (instancetype)metadataWithDictionary:(NSDictionary *)dictionary;
-+ (instancetype)metadataWithAsset:(ALAsset *)asset __TVOS_PROHIBITED;
-+ (instancetype)metadataWithAssetURL:(NSURL *)assetURL __TVOS_PROHIBITED;
++ (instancetype)metadataWithPHAsset:(PHAsset *)asset; // Using ALAsset
 + (instancetype)metadataWithFileURL:(NSURL *)fileURL;
 + (instancetype)metadataWithImageData:(NSData *)imageData;
 
-+ (NSDictionary *)dictionaryWithAssetURL:(NSURL *)assetURL __TVOS_PROHIBITED;
++ (NSDictionary *)dictionaryWithPHAsset:(PHAsset *)asset; // Using ALAssetsLibrary
 
 + (NSData *)dataWithImageData:(NSData *)imageData andMetadata:(SYMetadata *)metadata;
 

@@ -3,16 +3,13 @@
 //  SYPictureMetadataExample
 //
 //  Created by Stan Chevallier on 12/13/12.
-//  Copyright (c) 2012 Syan. All rights reserved.
+//  Updated by Alfin (2025) – Migrated to PHAsset / Photos framework
 //
 
 #import <ImageIO/ImageIO.h>
 #import "SYMetadata.h"
 #import "NSDictionary+SY.h"
-
-#if !TARGET_OS_TV
-#import <AssetsLibrary/AssetsLibrary.h>
-#endif
+#import <Photos/Photos.h>
 
 #define SYKeyForMetadata(name)          NSStringFromSelector(@selector(metadata##name))
 #define SYDictionaryForMetadata(name)   SYPaste(SYPaste(kCGImageProperty,name),Dictionary)
@@ -32,56 +29,73 @@
 {
     if (!dictionary)
         return nil;
-    
+
     NSError *error;
-    
+
     SYMetadata *instance = [MTLJSONAdapter modelOfClass:self.class fromJSONDictionary:dictionary error:&error];
-    
+
     if (instance)
         instance->_originalDictionary = dictionary;
-        
+
     if (error)
         NSLog(@"--> Error creating %@ object: %@", NSStringFromClass(self.class), error);
-    
+
     return instance;
 }
 
-+ (instancetype)metadataWithAsset:(ALAsset *)asset
++ (instancetype)metadataWithPHAsset:(PHAsset *)asset
 {
-#if !TARGET_OS_TV
-    ALAssetRepresentation *representation = [asset defaultRepresentation];
-    return [self metadataWithDictionary:[representation metadata]];
-#else
-    return nil;
-#endif
-}
+    if (!asset) return nil;
 
-+ (instancetype)metadataWithAssetURL:(NSURL *)assetURL
-{
-    NSDictionary *dictionary = [self dictionaryWithAssetURL:assetURL];
-    return [self metadataWithDictionary:dictionary];
+    __block SYMetadata *result = nil;
+
+    PHImageRequestOptions *options = [[PHImageRequestOptions alloc] init];
+    options.version = PHImageRequestOptionsVersionCurrent;
+    options.deliveryMode = PHImageRequestOptionsDeliveryModeHighQualityFormat;
+    options.synchronous = YES;
+
+    [[PHImageManager defaultManager] requestImageDataAndOrientationForAsset:asset
+                                                                    options:options
+                                                              resultHandler:^(NSData * _Nullable imageData,
+                                                                              NSString * _Nullable dataUTI,
+                                                                              CGImagePropertyOrientation orientation,
+                                                                              NSDictionary * _Nullable info) {
+        if (imageData) {
+            CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)imageData, NULL);
+            if (source) {
+                NSDictionary *metadataDict = (__bridge_transfer NSDictionary *)
+                                             CGImageSourceCopyPropertiesAtIndex(source, 0, NULL);
+                if (metadataDict) {
+                    result = [SYMetadata metadataWithDictionary:metadataDict];
+                }
+                CFRelease(source);
+            }
+        }
+    }];
+
+    return result;
 }
 
 + (instancetype)metadataWithFileURL:(NSURL *)fileURL
 {
     if (!fileURL)
         return nil;
-    
+
     CGImageSourceRef source = CGImageSourceCreateWithURL((__bridge CFURLRef)fileURL, NULL);
     if (source == NULL)
         return nil;
-    
+
     NSDictionary *dictionary;
-    
+
     NSDictionary *options = @{(NSString *)kCGImageSourceShouldCache:@(NO)};
     CFDictionaryRef properties = CGImageSourceCopyPropertiesAtIndex(source, 0, (__bridge CFDictionaryRef)options);
     if (properties) {
         dictionary = (__bridge NSDictionary*)properties;
         CFRelease(properties);
     }
-    
+
     CFRelease(source);
-    
+
     return [self metadataWithDictionary:dictionary];
 }
 
@@ -89,22 +103,22 @@
 {
     if (!imageData.length)
         return nil;
-    
+
     CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef) imageData, NULL);
     if (source == NULL)
         return nil;
-    
+
     NSDictionary *dictionary;
-    
+
     NSDictionary *options = @{(NSString *)kCGImageSourceShouldCache:@(NO)};
     CFDictionaryRef properties = CGImageSourceCopyPropertiesAtIndex(source, 0, (__bridge CFDictionaryRef)options);
     if (properties) {
         dictionary = (__bridge NSDictionary*)properties;
         CFRelease(properties);
     }
-    
+
     CFRelease(source);
-    
+
     return [self metadataWithDictionary:dictionary];
 }
 
@@ -118,57 +132,65 @@
         NSLog(@"Error: Could not create image source");
         return nil;
     }
-    
+
     CFStringRef sourceImageType = CGImageSourceGetType(source);
-    
+
     // create a new data object and write the new image into it
     NSMutableData *data = [NSMutableData data];
     CGImageDestinationRef destination = CGImageDestinationCreateWithData((__bridge CFMutableDataRef)data, sourceImageType, 1, NULL);
-    
+
     if (!destination) {
         NSLog(@"Error: Could not create image destination");
         CFRelease(source);
         return nil;
     }
-    
-    // add the image contained in the image source to the destination, overidding the old metadata with our modified metadata
+
+    // add the image contained in the image source to the destination, overriding the old metadata with our modified metadata
     CGImageDestinationAddImageFromSource(destination, source, 0, (__bridge CFDictionaryRef)metadata.generatedDictionary);
     BOOL success = CGImageDestinationFinalize(destination);
-    
+
     if (!success)
         NSLog(@"Error: Could not create data from image destination");
-    
+
     CFRelease(destination);
     CFRelease(source);
-    
+
     return (success ? data : nil);
 }
 
 #pragma mark - Getting metadata
 
-+ (NSDictionary *)dictionaryWithAssetURL:(NSURL *)assetURL
++ (NSDictionary *)dictionaryWithPHAsset:(PHAsset *)asset
 {
-#if !TARGET_OS_TV
-    __block ALAsset *assetAtUrl = nil;
-    ALAssetsLibrary* library = [[ALAssetsLibrary alloc] init];
-    
-    dispatch_semaphore_t sema = dispatch_semaphore_create(0);
-    [library assetForURL:assetURL resultBlock:^(ALAsset *asset) {
-        assetAtUrl = asset;
-        dispatch_semaphore_signal(sema);
-    } failureBlock:^(NSError *error) {
-        dispatch_semaphore_signal(sema);
+    if (!asset) return nil;
+
+    __block NSDictionary *result = nil;
+
+    PHImageRequestOptions *options = [[PHImageRequestOptions alloc] init];
+    options.version = PHImageRequestOptionsVersionCurrent;
+    options.deliveryMode = PHImageRequestOptionsDeliveryModeHighQualityFormat;
+    options.synchronous = YES;
+
+    [[PHImageManager defaultManager] requestImageDataAndOrientationForAsset:asset
+                                                                    options:options
+                                                              resultHandler:^(NSData * _Nullable imageData,
+                                                                              NSString * _Nullable dataUTI,
+                                                                              CGImagePropertyOrientation orientation,
+                                                                              NSDictionary * _Nullable info) {
+        if (imageData) {
+            CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)imageData, NULL);
+            if (source) {
+                NSDictionary *metadataDict = (__bridge_transfer NSDictionary *)
+                                             CGImageSourceCopyPropertiesAtIndex(source, 0, NULL);
+                if (metadataDict) {
+                    result = metadataDict;
+                }
+                CFRelease(source);
+            }
+        }
     }];
-    dispatch_semaphore_wait(sema, DISPATCH_TIME_FOREVER);
-    
-    if (!assetAtUrl)
-        return nil;
-    
-    ALAssetRepresentation *representation = [assetAtUrl defaultRepresentation];
-    return [representation metadata];
-#else
-    return nil;
-#endif
+
+    return result;
 }
 
 #pragma mark - Mapping

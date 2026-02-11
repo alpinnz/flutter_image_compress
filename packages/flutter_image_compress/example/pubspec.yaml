@@ -4,7 +4,8 @@ version: 1.0.0+1
 publish_to: none
 
 environment:
-  sdk: '>=2.19.0 <3.0.0'
+  # Flutter now uses Dart 3; keep this example compatible with current toolchains.
+  sdk: '>=3.0.0 <4.0.0'
   flutter: '>=2.0.0'
 
 dependencies:
@@ -16,10 +17,14 @@ dependencies:
   # flutter_image_compress_web:
   #   path: ../../flutter_image_compress_web
   path_provider: ^2.0.0
-  path_provider_ohos:
-     git:
-       url: https://gitee.com/openharmony-sig/flutter_packages.git
-       path: packages/path_provider/path_provider_ohos
+
+  # NOTE: The OHOS implementation lives in a separate repo and is intentionally
+  # not pulled in by default to keep `flutter pub get` and CI analysis offline-friendly.
+  # If you need OHOS in the example, add `path_provider_ohos` back locally.
+  # path_provider_ohos:
+  #   git:
+  #     url: https://gitee.com/openharmony-sig/flutter_packages.git
+  #     path: packages/path_provider/path_provider_ohos
 flutter:
   uses-material-design: true
 

@@ -43,37 +43,88 @@
     return instance;
 }
 
-+ (instancetype)metadataWithPHAsset:(PHAsset *)asset
-{
+/// Shared helper: synchronously fetch image data for a PHAsset and extract its metadata dictionary.
+///
+/// Notes:
+/// - Enables iCloud downloads (networkAccessAllowed).
+/// - Avoids calling Photos synchronous requests on the main thread to prevent UI jank/deadlocks.
+static NSDictionary *_Nullable SYMetadataCopyImagePropertiesFromPHAsset(PHAsset *asset) {
     if (!asset) return nil;
-
-    __block SYMetadata *result = nil;
 
     PHImageRequestOptions *options = [[PHImageRequestOptions alloc] init];
     options.version = PHImageRequestOptionsVersionCurrent;
     options.deliveryMode = PHImageRequestOptionsDeliveryModeHighQualityFormat;
-    options.synchronous = YES;
+    options.networkAccessAllowed = YES;
 
-    [[PHImageManager defaultManager] requestImageDataAndOrientationForAsset:asset
-                                                                    options:options
-                                                              resultHandler:^(NSData * _Nullable imageData,
-                                                                              NSString * _Nullable dataUTI,
-                                                                              CGImagePropertyOrientation orientation,
-                                                                              NSDictionary * _Nullable info) {
-        if (imageData) {
-            CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)imageData, NULL);
-            if (source) {
-                NSDictionary *metadataDict = (__bridge_transfer NSDictionary *)
-                                             CGImageSourceCopyPropertiesAtIndex(source, 0, NULL);
-                if (metadataDict) {
-                    result = [SYMetadata metadataWithDictionary:metadataDict];
-                }
-                CFRelease(source);
-            }
-        }
-    }];
+    __block NSData *imageData = nil;
 
-    return result;
+    void (^requestBlock)(void) = ^{
+        // If we're off-main-thread, it's safe to use synchronous=YES.
+        options.synchronous = ![NSThread isMainThread];
+
+        [[PHImageManager defaultManager] requestImageDataAndOrientationForAsset:asset
+                                                                        options:options
+                                                                  resultHandler:^(NSData * _Nullable data,
+                                                                                  NSString * _Nullable dataUTI,
+                                                                                  CGImagePropertyOrientation orientation,
+                                                                                  NSDictionary * _Nullable info) {
+            imageData = data;
+        }];
+    };
+
+    if ([NSThread isMainThread]) {
+        // Don't block Photos on the main thread; use async + semaphore.
+        dispatch_semaphore_t sema = dispatch_semaphore_create(0);
+        options.synchronous = NO;
+        [[PHImageManager defaultManager] requestImageDataAndOrientationForAsset:asset
+                                                                        options:options
+                                                                  resultHandler:^(NSData * _Nullable data,
+                                                                                  NSString * _Nullable dataUTI,
+                                                                                  CGImagePropertyOrientation orientation,
+                                                                                  NSDictionary * _Nullable info) {
+            imageData = data;
+            dispatch_semaphore_signal(sema);
+        }];
+        // Wait a bounded time to avoid potential deadlocks.
+        dispatch_semaphore_wait(sema, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(30 * NSEC_PER_SEC)));
+    } else {
+        requestBlock();
+    }
+
+    if (!imageData.length) return nil;
+
+    CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)imageData, NULL);
+    if (!source) return nil;
+
+    NSDictionary *metadataDict = (__bridge_transfer NSDictionary *)
+        CGImageSourceCopyPropertiesAtIndex(source, 0, NULL);
+    CFRelease(source);
+
+    return metadataDict;
+}
+
++ (instancetype)metadataWithPHAsset:(PHAsset *)asset
+{
+    NSDictionary *metadataDict = SYMetadataCopyImagePropertiesFromPHAsset(asset);
+    return metadataDict ? [SYMetadata metadataWithDictionary:metadataDict] : nil;
+}
+
++ (instancetype)metadataWithAsset:(id)asset
+{
+    // Best-effort source-compat wrapper: if caller already provides a PHAsset, forward to it.
+    if ([asset isKindOfClass:[PHAsset class]]) {
+        return [self metadataWithPHAsset:(PHAsset *)asset];
+    }
+    return nil;
+}
+
++ (instancetype)metadataWithAssetURL:(NSURL *)assetURL
+{
+    if (!assetURL) return nil;
+
+    PHFetchResult<PHAsset *> *fetch = [PHAsset fetchAssetsWithALAssetURLs:@[assetURL] options:nil];
+    PHAsset *asset = fetch.firstObject;
+    return asset ? [self metadataWithPHAsset:asset] : nil;
 }
 
 + (instancetype)metadataWithFileURL:(NSURL *)fileURL
@@ -162,35 +213,15 @@
 
 + (NSDictionary *)dictionaryWithPHAsset:(PHAsset *)asset
 {
-    if (!asset) return nil;
+    return SYMetadataCopyImagePropertiesFromPHAsset(asset);
+}
 
-    __block NSDictionary *result = nil;
-
-    PHImageRequestOptions *options = [[PHImageRequestOptions alloc] init];
-    options.version = PHImageRequestOptionsVersionCurrent;
-    options.deliveryMode = PHImageRequestOptionsDeliveryModeHighQualityFormat;
-    options.synchronous = YES;
-
-    [[PHImageManager defaultManager] requestImageDataAndOrientationForAsset:asset
-                                                                    options:options
-                                                              resultHandler:^(NSData * _Nullable imageData,
-                                                                              NSString * _Nullable dataUTI,
-                                                                              CGImagePropertyOrientation orientation,
-                                                                              NSDictionary * _Nullable info) {
-        if (imageData) {
-            CGImageSourceRef source = CGImageSourceCreateWithData((__bridge CFDataRef)imageData, NULL);
-            if (source) {
-                NSDictionary *metadataDict = (__bridge_transfer NSDictionary *)
-                                             CGImageSourceCopyPropertiesAtIndex(source, 0, NULL);
-                if (metadataDict) {
-                    result = metadataDict;
-                }
-                CFRelease(source);
-            }
-        }
-    }];
-
-    return result;
++ (NSDictionary *)dictionaryWithAssetURL:(NSURL *)assetURL
+{
+    if (!assetURL) return nil;
+    PHFetchResult<PHAsset *> *fetch = [PHAsset fetchAssetsWithALAssetURLs:@[assetURL] options:nil];
+    PHAsset *asset = fetch.firstObject;
+    return asset ? [self dictionaryWithPHAsset:asset] : nil;
 }
 
 #pragma mark - Mapping

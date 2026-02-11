@@ -11,6 +11,8 @@ scripts:
     exec: flutter pub get
   test:
     exec: flutter test
+    packageFilters:
+      dirExists: test
   format:
     exec: dart format --set-exit-if-changed .
   try_build_apk:

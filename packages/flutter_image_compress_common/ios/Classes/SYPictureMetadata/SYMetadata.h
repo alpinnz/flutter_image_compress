@@ -3,7 +3,9 @@
 //
 
 #import <Foundation/Foundation.h>
-#import <Photos/Photos.h> // Using Photos framework
+
+// Forward declare to reduce header coupling; Photos is imported in SYMetadata.m.
+@class PHAsset;
 
 #import "SYMetadataTIFF.h"
 #import "SYMetadataGIF.h"
@@ -48,6 +50,7 @@
 @property SYMETADATA_PROPERTY_STRONG SYMetadataExifAux       *metadataExifAux;
 
 // Fallback
+// Unparsed vendor-specific dictionaries exposed as-is for consumers (fallback for unknown/proprietary metadata).
 @property SYMETADATA_PROPERTY_COPY NSDictionary   *metadataApple;
 @property SYMETADATA_PROPERTY_COPY NSDictionary   *metadataPictureStyle;
 
@@ -65,11 +68,27 @@
 @property (nonatomic, copy, readonly)   NSString  *profileName;
 
 + (instancetype)metadataWithDictionary:(NSDictionary *)dictionary;
-+ (instancetype)metadataWithPHAsset:(PHAsset *)asset; // Using ALAsset
+
+/// Photos-framework based metadata extraction.
++ (instancetype)metadataWithPHAsset:(PHAsset *)asset;
+
+/// Deprecated legacy API (ALAsset-era). Prefer `metadataWithPHAsset:`.
+///
+/// This keeps source compatibility with older versions of this library without
+/// referencing the removed AssetsLibrary framework types.
++ (instancetype)metadataWithAsset:(id)asset __attribute__((deprecated("Use metadataWithPHAsset: instead.")));
+
+/// Deprecated legacy API (ALAsset URL-era). Prefer `metadataWithPHAsset:`.
++ (instancetype)metadataWithAssetURL:(NSURL *)assetURL __attribute__((deprecated("Use metadataWithPHAsset: instead.")));
+
 + (instancetype)metadataWithFileURL:(NSURL *)fileURL;
 + (instancetype)metadataWithImageData:(NSData *)imageData;
 
-+ (NSDictionary *)dictionaryWithPHAsset:(PHAsset *)asset; // Using ALAssetsLibrary
+/// Photos-framework based metadata dictionary extraction.
++ (NSDictionary *)dictionaryWithPHAsset:(PHAsset *)asset;
+
+/// Deprecated legacy API (ALAsset URL-era). Prefer `dictionaryWithPHAsset:`.
++ (NSDictionary *)dictionaryWithAssetURL:(NSURL *)assetURL __attribute__((deprecated("Use dictionaryWithPHAsset: instead.")));
 
 + (NSData *)dataWithImageData:(NSData *)imageData andMetadata:(SYMetadata *)metadata;
 

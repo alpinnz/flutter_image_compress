@@ -6,7 +6,7 @@ publish_to: none
 environment:
   # Flutter now uses Dart 3; keep this example compatible with current toolchains.
   sdk: '>=3.0.0 <4.0.0'
-  flutter: '>=2.0.0'
+  flutter: '>=3.0.0'
 
 dependencies:
   flutter:

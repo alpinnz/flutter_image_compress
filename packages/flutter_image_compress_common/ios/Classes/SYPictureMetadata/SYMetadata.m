@@ -51,6 +51,13 @@
 static NSDictionary *_Nullable SYMetadataCopyImagePropertiesFromPHAsset(PHAsset *asset) {
     if (!asset) return nil;
 
+    // Enforce off-main-thread usage to avoid blocking the UI.
+    // This helper is synchronous by design; doing any kind of wait on the main thread can freeze the UI.
+    if ([NSThread isMainThread]) {
+        NSLog(@"[SYMetadata] SYMetadataCopyImagePropertiesFromPHAsset must not be called on the main thread; returning nil to avoid UI jank.");
+        return nil;
+    }
+
     PHImageRequestOptions *options = [[PHImageRequestOptions alloc] init];
     options.version = PHImageRequestOptionsVersionCurrent;
     options.deliveryMode = PHImageRequestOptionsDeliveryModeHighQualityFormat;
@@ -58,37 +65,47 @@ static NSDictionary *_Nullable SYMetadataCopyImagePropertiesFromPHAsset(PHAsset 
 
     __block NSData *imageData = nil;
 
-    void (^requestBlock)(void) = ^{
-        // If we're off-main-thread, it's safe to use synchronous=YES.
-        options.synchronous = ![NSThread isMainThread];
-
-        [[PHImageManager defaultManager] requestImageDataAndOrientationForAsset:asset
-                                                                        options:options
-                                                                  resultHandler:^(NSData * _Nullable data,
-                                                                                  NSString * _Nullable dataUTI,
-                                                                                  CGImagePropertyOrientation orientation,
-                                                                                  NSDictionary * _Nullable info) {
-            imageData = data;
-        }];
+    // Request image data. If options.synchronous == YES, Photos will invoke the handler before returning.
+    void (^requestBlock)(void (^completion)(NSData *_Nullable data)) = ^(void (^completion)(NSData *_Nullable data)) {
+        if (@available(iOS 13, *)) {
+            [[PHImageManager defaultManager] requestImageDataAndOrientationForAsset:asset
+                                                                            options:options
+                                                                      resultHandler:^(NSData * _Nullable data,
+                                                                                      NSString * _Nullable dataUTI,
+                                                                                      CGImagePropertyOrientation orientation,
+                                                                                      NSDictionary * _Nullable info) {
+                completion(data);
+            }];
+        } else {
+#pragma clang diagnostic push
+#pragma clang diagnostic ignored "-Wdeprecated-declarations"
+            [[PHImageManager defaultManager] requestImageDataForAsset:asset
+                                                               options:options
+                                                         resultHandler:^(NSData * _Nullable data,
+                                                                         NSString * _Nullable dataUTI,
+                                                                         UIImageOrientation orientation,
+                                                                         NSDictionary * _Nullable info) {
+                completion(data);
+            }];
+#pragma clang diagnostic pop
+        }
     };
 
-    if ([NSThread isMainThread]) {
-        // Don't block Photos on the main thread; use async + semaphore.
-        dispatch_semaphore_t sema = dispatch_semaphore_create(0);
-        options.synchronous = NO;
-        [[PHImageManager defaultManager] requestImageDataAndOrientationForAsset:asset
-                                                                        options:options
-                                                                  resultHandler:^(NSData * _Nullable data,
-                                                                                  NSString * _Nullable dataUTI,
-                                                                                  CGImagePropertyOrientation orientation,
-                                                                                  NSDictionary * _Nullable info) {
-            imageData = data;
-            dispatch_semaphore_signal(sema);
-        }];
-        // Wait a bounded time to avoid potential deadlocks.
-        dispatch_semaphore_wait(sema, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(30 * NSEC_PER_SEC)));
-    } else {
-        requestBlock();
+    // Off-main-thread: request synchronously to keep existing sync contract.
+    options.synchronous = YES;
+
+    // Even with synchronous=YES, Photos may still deliver via callbacks; guard with a bounded wait.
+    // This also protects against iCloud/network stalls.
+    dispatch_semaphore_t sema = dispatch_semaphore_create(0);
+    requestBlock(^(NSData *_Nullable data) {
+        imageData = data;
+        dispatch_semaphore_signal(sema);
+    });
+
+    long waitResult = dispatch_semaphore_wait(sema, dispatch_time(DISPATCH_TIME_NOW, (int64_t)(30 * NSEC_PER_SEC)));
+    if (waitResult != 0) {
+        NSLog(@"[SYMetadata] Timed out waiting for PHAsset image data (30s); returning nil.");
+        return nil;
     }
 
     if (!imageData.length) return nil;
